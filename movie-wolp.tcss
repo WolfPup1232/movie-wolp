@@ -1,0 +1,103 @@
+Screen {
+    background: black;
+    border: solid #40C057;
+    height: 100%;
+    layout: vertical;
+    overflow: hidden;
+    padding: 0;
+    position: relative;
+}
+
+Button {
+    background: black;
+    border: solid white;
+    color: #40C057;
+    margin: 0 2;
+}
+
+ListView {
+    border: round #40C057;
+    height: 1fr;
+    overflow: auto;
+    padding: 0;
+    width: 100%
+}
+
+Input {
+    border: solid white;
+    height: 3;
+    margin: 0;
+}
+
+Footer {
+    margin: 1 0 0 0;
+}
+
+#header {
+    align-horizontal: center;
+    background: black;
+    border-bottom: solid #40C057;
+    height: auto;
+    layout: horizontal;
+    padding: 0;
+}
+
+#logo {
+    margin: 0 4 0 0;
+    width: 24;
+}
+
+#container-horizontal {
+    height: 3;
+    width: 100%;
+}
+
+#container-title {
+    align-vertical: top;
+    height: 10;
+    layout: vertical;
+    padding: 4 1;
+}
+
+#title {
+    color: #40C057;
+    content-align: left middle;
+    height: 3;
+    margin: -1 0;
+    padding: 0;
+    text-align: left;
+    text-style: bold;
+}
+
+#subtitle {
+    color: #40C057;
+    content-align: left middle;
+    height: 2;
+    margin: -2 0;
+    padding: 0;
+    text-align: left;
+}
+
+#button-config {
+    margin: 2;
+}
+
+#button-config-save {
+    margin: 2;
+}
+
+#button-remove-folder {
+    dock: right;
+    position: absolute;
+}
+
+#button-rescan-library {
+    dock: right;
+    position: absolute;
+}
+
+#button-exit {
+    dock: bottom;
+    position: absolute;
+}
+

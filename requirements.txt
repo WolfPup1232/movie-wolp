@@ -1,0 +1,2 @@
+textual>=0.47.1
+rich-pixels>=0.3.0
