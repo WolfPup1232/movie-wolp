@@ -14,18 +14,24 @@ import os, json, subprocess
 
 # Import Python Standard Library Classes
 from pathlib import Path
+from shutil import disk_usage
 
 # Import Textual Library Classes
 from textual import events
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Static, Button, ListView, ListItem, Input
-from textual.containers import Container, Vertical, Horizontal
-from textual.screen import Screen
+from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical
+from textual.events import Key
 from textual.reactive import reactive
+from textual.screen import Screen
+from textual.suggester import Suggester, SuggestFromList
+from textual.widgets import Header, Footer, Static, Button, ListView, ListItem, Input
+from textual.widgets._input import Selection
+from rich.console import Console
+from rich.text import Text
 
 # Import Rich Pixels Library Classes
 from rich_pixels import Pixels
-from rich.console import Console
 
 # Application title
 APP_TITLE = "Movie Wolp"
@@ -58,15 +64,18 @@ class MovieWolp(App):
         self.tv_cache_path = self.base_path / TV_CACHE
 
         # Initialize Movie Wolp's config object
-        self.config = {"movie_dirs": [], "tv_dirs": []}
+        self.config = {"movie_directories": [], "tv_directories": []}
 
         # Initialize Movie Wolp's media library objects
         self.movies = {}
         self.tv_shows = {}
 
+        # Initialize list of mounted drives
+        self.drives = []
+
     """
     Textual DOM mounted event handler.
-    Handles the events which occur immediately after the Textual DOM has been initialized.
+    Handles events which occur immediately after the Textual DOM has been initialized.
     """
     def on_mount(self) -> None:
 
@@ -74,16 +83,16 @@ class MovieWolp(App):
         if (self.config_path.exists() and self.movie_cache_path.exists() and self.tv_cache_path.exists()):
 
             # Load config file...
-            with open(self.config_path) as f:
-                self.config = json.load(f)
+            with open(self.config_path) as file:
+                self.config = json.load(file)
 
             # Load movie cache file...
-            with open(self.movie_cache_path) as f:
-                self.movies = json.load(f)
+            with open(self.movie_cache_path) as file:
+                self.movies = json.load(file)
 
             # Load TV cache file...
-            with open(self.tv_cache_path) as f:
-                self.tv_shows = json.load(f)
+            with open(self.tv_cache_path) as file:
+                self.tv_shows = json.load(file)
 
             # Show main menu
             self.push_screen(MainMenuScreen())
@@ -100,8 +109,8 @@ class MovieWolp(App):
     def save_config(self):
 
         # Save config file...
-        with open(self.config_path, 'w') as f:
-            json.dump(self.config, f, indent=2)
+        with open(self.config_path, 'w') as file:
+            json.dump(self.config, file, indent=2)
 
     """
     Scan movie directories, then save the movie file paths to a cache file.
@@ -109,34 +118,56 @@ class MovieWolp(App):
     def scan_movie_directories(self):
 
         # Scan movies library folders for list of movies
-        movies = self.scan_directories(self.config["movie_dirs"])
+        movies = self.scan_directories(self.config["movie_directories"])
 
         # Save list of movies to movies cache file...
-        with open(self.movie_cache_path, 'w') as f:
-            json.dump(movies, f, indent=2)
+        with open(self.movie_cache_path, 'w') as file:
+            json.dump(movies, file, indent=2)
 
     """
     Scan TV directories, then save the episode file paths to a cache file.
     """
     def scan_tv_directories(self):
 
-        # Scan TV library folders for list of TV shows
-        tv_shows = self.scan_directories(self.config["tv_dirs"])
+        # Initialize empty list of TV episodes
+        episode_files = []
 
-        # Save list of TV shows to TV cache file...
-        with open(self.tv_cache_path, 'w') as f:
-            json.dump(tv_shows, f, indent=2)
+        # Scan each TV show library folder...
+        for tv_root in self.config["tv_directories"]:
+            for tv_show in os.scandir(tv_root):
+
+                # Skip loose files at this level...
+                if not tv_show.is_dir():
+                    continue
+
+                # Add each TV show episode to the list of TV episodes...
+                for item in os.scandir(tv_show.path):
+                    if item.is_file():
+                        episode_files.append(item.path)
+
+                # Scan for "season" subfolders...
+                for item in os.scandir(tv_show.path):
+                    if item.is_dir() and item.name.lower().startswith("season"):
+
+                        # Add each season's episodes to the list of TV episodes...
+                        for season_item in os.scandir(item.path):
+                            if season_item.is_file():
+                                episode_files.append(season_item.path)
+
+        # Save list of TV episodes
+        with open(self.tv_cache_path, 'w') as file:
+            json.dump(episode_files, file, indent=2)
 
     """
     Recursively scan a list of directories for files.
     """
-    def scan_directories(self, dir_list):
+    def scan_directories(self, directory_list):
 
         # Initialize empty list of files
         all_files = []
 
         # Recursively scan each subdirectory in the specified directory...
-        for path in dir_list:
+        for path in directory_list:
             for root, _, files in os.walk(path):
 
                 # Add each file found to the list of all files...
@@ -147,6 +178,17 @@ class MovieWolp(App):
         # Return list of all files found
         return all_files
 
+    """
+    Get Textual DOM title element.
+    """
+    def get_title(self):
+        return Static("Movie Wolp", id="title")
+
+    """
+    Get Textual DOM logo element.
+    """
+    def get_logo(self):
+        return Static(Pixels.from_image_path(self.base_path / "wolp-24.png"), id="logo")
 
 """
 Main Menu Screen
@@ -159,8 +201,11 @@ class MainMenuScreen(Screen):
     """
     def compose(self) -> ComposeResult:
 
-        # Title
-        yield Container(Static(Pixels.from_image_path(self.app.base_path / "wolp-24.png"), id="logo"), Vertical(Static("Movie Wolp", id="title"), Static("Main Menu", id="subtitle"), id="container-title"), id="header")
+        # Initialize Textual DOM elements
+        self.subtitle = Static("Main Menu", id="subtitle")
+
+        # Header
+        yield Container(self.app.get_logo(), Vertical(self.app.get_title(), self.subtitle, id="container-title"), id="header")
 
         # Menu buttons
         yield Button("Search Movies...", id="button-search-movies")
@@ -172,7 +217,7 @@ class MainMenuScreen(Screen):
 
     """
     Textual button click event handler.
-    Handles the button click events for all buttons in the Textual DOM.
+    Handles button click events for all buttons in the Textual DOM.
     """
     def on_button_pressed(self, event: Button.Pressed) -> None:
 
@@ -206,38 +251,52 @@ class ConfigurationScreen(Screen):
     """
     def compose(self) -> ComposeResult:
 
-        # Title
-        yield Container(Static(Pixels.from_image_path(self.app.base_path / "wolp-24.png"), id="logo"), Vertical(Static("Movie Wolp", id="title"), Static("Configuration Menu", id="subtitle"), id="container-title"), id="header")
+        # Initialize Textual DOM elements
+        self.subtitle = Static("Configuration Menu", id="subtitle")
+
+        # Header
+        yield Container(self.app.get_logo(), Vertical(self.app.get_title(), self.subtitle, id="container-title"), id="header")
 
         # Menu buttons
         yield Button("Movie Library folders...", id="button-add-movies")
         yield Button("TV Show Library folders...", id="button-add-tv")
-        yield Button("Save & Return to Main Menu", id="button-config-save")
+        yield Button("Save & Rescan Libraries", id="button-config-save")
 
         # Exit button
         yield Button("Exit Movie Wolp", id="button-exit")
 
     """
+    Textual DOM mounted event handler.
+    Handles events which occur immediately after the Textual DOM has been initialized.
+    """
+    def on_mount(self) -> None:
+
+        # Get list of mounted drives...
+        self.app.drives = list(reversed([os.path.join("/mnt", drive)
+                                         for drive in os.listdir("/mnt")
+                                         if os.path.isdir(os.path.join("/mnt", drive))]))
+
+    """
     Textual button click event handler.
-    Handles the button click events for all buttons in the Textual DOM.
+    Handles button click events for all buttons in the Textual DOM.
     """
     def on_button_pressed(self, event: Button.Pressed) -> None:
 
         # Movie Library button click...
         if event.button.id == "button-add-movies":
-            self.app.push_screen(FolderListScreen("movie_dirs"))
+            self.app.push_screen(FolderListScreen("movie_directories"))
 
         # TV Show Library button click...
         elif event.button.id == "button-add-tv":
-            self.app.push_screen(FolderListScreen("tv_dirs"))
+            self.app.push_screen(FolderListScreen("tv_directories"))
 
         # Save & Return button click...
         elif event.button.id == "button-config-save":
 
             # Apply any movie/tv folder screen changes before saving...
             if hasattr(self.app, "temp_folder_lists"):
-                for key, val in self.app.temp_folder_lists.items():
-                    self.app.config[key] = val
+                for key, value in self.app.temp_folder_lists.items():
+                    self.app.config[key] = value
 
             # Save configuration file
             self.app.save_config()
@@ -249,6 +308,9 @@ class ConfigurationScreen(Screen):
             # Show main menu
             self.app.pop_screen()
             self.app.push_screen(MainMenuScreen())
+
+             # Notify user
+            self.app.notify("Rescan successfully completed!")
 
         # Exit Movie Wolp button click...
         elif event.button.id == "button-exit":
@@ -271,25 +333,22 @@ class FolderListScreen(Screen):
         # Get folder list key so we know which folder list to edit
         self.key = key
 
+        # Initialize value indicating the last-clicked mouse button
+        self.mouse_button_clicked = 1
+
     """
     Textual DOM initialization event handler.
     Initializes the generic folder list screen's UI controls.
     """
     def compose(self) -> ComposeResult:
 
-        # Initialize input bar and folder list
-        self.input = Input(placeholder="Enter a folder path")
-        self.list_view = ListView()
+        # Initialize Textual DOM elements
+        self.subtitle = Static({"movie_directories": "Movie Library Folders", "tv_directories": "TV Show Library Folders"}.get(self.key, ""), id="subtitle")
+        self.input = FolderBar(placeholder="Enter a folder path", suggester=SuggestFromList(self.app.drives, case_sensitive=False))
+        self.list_view = ListView(id="search-results")
 
-        # Initialize subtitle text according to folder list key
-        subtitle_text = ""
-        if self.key == "movie_dirs":
-            subtitle_text = "Movie Library Folders"
-        elif self.key == "tv_dirs":
-            subtitle_text = "TV Show Library Folders"
-
-        # Title
-        yield Container(Static(Pixels.from_image_path(self.app.base_path / "wolp-24.png"), id="logo"), Vertical(Static("Movie Wolp", id="title"), Static(subtitle_text, id="subtitle"), id="container-title"), id="header")
+        # Header
+        yield Container(self.app.get_logo(), Vertical(self.app.get_title(), self.subtitle, id="container-title"), id="header")
 
         # Input bar
         yield self.input
@@ -305,7 +364,7 @@ class FolderListScreen(Screen):
 
     """
     Textual DOM mounted event handler.
-    Handles the events which occur immediately after the Textual DOM has been initialized.
+    Handles events which occur immediately after the Textual DOM has been initialized.
     """
     def on_mount(self) -> None:
 
@@ -326,8 +385,136 @@ class FolderListScreen(Screen):
         self.refresh_list()
 
     """
+    Mouse down event handler.
+    Handles mouse button down events for the entire Textual DOM.
+    """
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+
+        # Detect left-click...
+        if event.button == 1:
+            self.mouse_button_clicked = 1
+
+        # Detect middle-click...
+        elif event.button == 2:
+            self.mouse_button_clicked = 2
+
+        # Detect right-click...
+        elif event.button == 3:
+            self.mouse_button_clicked = 3
+
+    """
+    Mouse click event handler.
+    Handles mouse click events for all controls in the Textual DOM.
+    """
+    def on_click(self, event: events.Click) -> None:
+
+        # If the mouse was single-clicked...
+        if event.chain == 1:
+
+            # If the click was a left-click...
+            if self.mouse_button_clicked == 1:
+
+                # Handle logo's left-click event
+                self.handle_logo_left_click(event.control)
+
+            # Otherwise, the click was a right-click...
+            elif self.mouse_button_clicked == 3:
+
+                # Handle list item's right-click event
+                self.handle_list_item_right_click(event.control)
+
+        # Otherwise, if the mouse was double-clicked...
+        elif event.chain == 2:
+
+            # If the second click was a left-click...
+            if self.mouse_button_clicked == 1:
+
+                # Handle input bar's double-click event
+                self.handle_input_double_click()
+
+                # Handle list item's double-click event
+                self.handle_list_item_double_click(event.control)
+
+    """
+    Logo mouse left-click event handler.
+    Handles mouse left-click events for the header logo in the Textual DOM.
+    """
+    def handle_logo_left_click(self, logo: Static) -> None:
+
+        # If the main logo was clicked...
+        if logo and logo.id == 'logo':
+
+            # Show main menu
+            self.app.pop_screen()
+
+    """
+    Input bar mouse double-click event handler.
+    Handles mouse double-click events for the input bar.
+    """
+    def handle_input_double_click(self) -> None:
+
+        # Select all text in the input bar
+        self.input.action_select_all()
+
+    """
+    List item mouse right-click event handler.
+    Handles mouse right-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_right_click(self, item: ListItem) -> None:
+
+        # If the right-clicked list item is a folder...
+        if item and item.name == 'folder' and hasattr(item, "renderable"):
+
+            # Get the file path from the list item
+            file_path = str(item.renderable)
+
+            # If the file path is not set...
+            if not file_path:
+
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
+
+            # If the file path exists...
+            if path.exists():
+
+                # Open the file path location in Dolphin
+                subprocess.Popen(["dolphin", "--select", str(path.resolve())])
+                return
+
+    """
+    List item mouse double-click event handler.
+    Handles mouse double-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_double_click(self, item: ListItem) -> None:
+
+        # If the double-clicked list item is a folder...
+        if item and item.name == 'folder' and hasattr(item, "renderable"):
+
+            # Get the file path from the list item
+            file_path = str(item.renderable)
+
+            # If the file path is not set...
+            if not file_path:
+
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
+
+            # If the file path exists...
+            if path.exists():
+
+                # Open the file path location in Dolphin
+                subprocess.Popen(["dolphin", "--select", str(path.resolve())])
+                return
+
+    """
     Textual button click event handler.
-    Handles the button click events for all buttons in the Textual DOM.
+    Handles button click events for all buttons in the Textual DOM.
     """
     def on_button_pressed(self, event: Button.Pressed) -> None:
 
@@ -372,8 +559,7 @@ class FolderListScreen(Screen):
 
         # Refresh folder list...
         for folder in self.folder_list:
-            self.list_view.append(ListItem(Static(folder)))
-
+            self.list_view.append(ListItem(Static(folder, name='folder')))
 
 """
 Movie Search Screen
@@ -381,20 +567,31 @@ Movie Search Screen
 class MovieSearchScreen(Screen):
 
     """
+    Class constructor.
+    """
+    def __init__(self):
+        super().__init__()
+
+        # Initialize value indicating the last-clicked mouse button
+        self.mouse_button_clicked = 1
+
+    """
     Textual DOM initialization event handler.
     Initializes the movie search screen's UI controls.
     """
     def compose(self) -> ComposeResult:
 
-        # Initialize search bar and search results
-        self.input = Input(placeholder="Start typing a movie title...")
+        # Initialize Textual DOM elements
+        self.subtitle = Static("Search Movies", id="subtitle")
+        self.diskinfo = Static("", id="container-disk-info")
+        self.search = SearchBar(placeholder="Start typing a movie title...")
         self.results = ListView(id="search-results")
 
         # Title
-        yield Container(Static(Pixels.from_image_path(self.app.base_path / "wolp-24.png"), id="logo"), Vertical(Static("Movie Wolp", id="title"), Static("Search Movies", id="subtitle"), id="container-title"), id="header")
+        yield Container(self.app.get_logo(), Vertical(self.app.get_title(), self.subtitle, id="container-title"), self.diskinfo, id="header")
 
         # Search bar
-        yield self.input
+        yield self.search
 
         # Search results
         yield self.results
@@ -404,16 +601,16 @@ class MovieSearchScreen(Screen):
 
     """
     Textual DOM mounted event handler.
-    Handles the events which occur immediately after the Textual DOM has been initialized.
+    Handles events which occur immediately after the Textual DOM has been initialized.
     """
     def on_mount(self):
 
         # Place cursor in search bar
-        self.input.focus()
+        self.search.focus()
 
         # Load movie cache file...
-        with open(self.app.movie_cache_path) as f:
-            self.movies = json.load(f)
+        with open(self.app.movie_cache_path) as file:
+            self.movies = json.load(file)
 
         # Initialize filtered movie list
         self.filtered = self.movies
@@ -423,7 +620,7 @@ class MovieSearchScreen(Screen):
 
     """
     Input field changed event handler.
-    Handles the input field text changed events for all text input fields in the Textual DOM.
+    Handles input field text changed events for all input fields in the Textual DOM.
     """
     def on_input_changed(self, event: Input.Changed) -> None:
 
@@ -431,44 +628,204 @@ class MovieSearchScreen(Screen):
         text = event.value.strip().lower()
 
         # Search movies for input field text
-        self.filtered = [m for m in self.movies if text in os.path.basename(m).lower()]
+        self.filtered = [movie for movie in self.movies if text in os.path.basename(movie).lower()]
 
         # Refresh search results
         self.refresh_results()
 
     """
+    Mouse down event handler.
+    Handles mouse button down events for the entire Textual DOM.
+    """
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+
+        # Detect left-click...
+        if event.button == 1:
+            self.mouse_button_clicked = 1
+
+        # Detect middle-click...
+        elif event.button == 2:
+            self.mouse_button_clicked = 2
+
+        # Detect right-click...
+        elif event.button == 3:
+            self.mouse_button_clicked = 3
+
+    """
     Mouse click event handler.
-    Handles the mouse click events for all controls in the Textual DOM.
+    Handles mouse click events for all controls in the Textual DOM.
     """
     def on_click(self, event: events.Click) -> None:
 
-        # If mouse was double-clicked...
-        if event.chain == 2:
+        # If the mouse was single-clicked...
+        if event.chain == 1:
 
-            # Attempt to handle list item double-click event
-            self.handle_list_item_double_click(event.control)
+            # If the click was a left-click...
+            if self.mouse_button_clicked == 1:
+
+                # Reset disk usage DOM element
+                self.query_one("#container-disk-info", Static).update("")
+
+                # Handle logo's left-click event
+                self.handle_logo_left_click(event.control)
+
+                # Handle list item's left-click event
+                self.handle_list_item_left_click(event.control)
+
+            # Otherwise, if the click was a right-click...
+            elif self.mouse_button_clicked == 3:
+
+                # Handle list item's right-click event
+                self.handle_list_item_right_click(event.control)
+
+        # Otherwise, if the mouse was double-clicked...
+        elif event.chain == 2:
+
+            # If the second click was a left-click...
+            if self.mouse_button_clicked == 1:
+
+                # Handle search bar's double-click event
+                self.handle_search_double_click()
+
+                # Handle list item's double-click event
+                self.handle_list_item_double_click(event.control)
 
     """
-    List item mouse double-click event handler.
-    Handles the mouse double-click events for all list items in the Textual DOM.
+    Logo mouse left-click event handler.
+    Handles mouse left-click events for the header logo in the Textual DOM.
     """
-    def handle_list_item_double_click(self, item: ListItem) -> None:
+    def handle_logo_left_click(self, logo: Static) -> None:
 
-        # If the double-clicked list item has text...
-        if item and hasattr(item, "renderable"):
+        # If the main logo was clicked...
+        if logo and logo.id == 'logo':
+
+            # Show main menu
+            self.app.pop_screen()
+
+    """
+    Search bar mouse double-click event handler.
+    Handles mouse double-click events for the search bar.
+    """
+    def handle_search_double_click(self) -> None:
+
+        # Select all text in the search bar
+        self.search.action_select_all()
+
+    """
+    List item mouse left-click event handler.
+    Handles mouse left-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_left_click(self, item: ListItem) -> None:
+
+        # If the left-clicked list item is a search result...
+        if item and item.name == 'result' and hasattr(item, "renderable"):
 
             # Get the file path from the list item
             file_path = str(item.renderable)
 
-            # If the file exists...
-            if file_path and Path(file_path).exists():
+            # If the file path is not set...
+            if not file_path:
 
-                # Attempt to open the file location in Dolphin
-                subprocess.Popen(["dolphin", "--select", str(Path(file_path).resolve())])
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
+
+            # Get disk path from file path...
+            while path.parent != Path("/mnt") and path != path.parent:
+                path = path.parent
+
+            # Attempt to read and output disk usage...
+            try:
+
+                # Get disk usage from file path
+                usage = disk_usage(path)
+
+                # Calculate disk usage
+                total_space = usage.total / (1024 ** 3)
+                free_space = usage.free / (1024 ** 3)
+
+                # Format disk usage output
+                text = Text()
+                text.append(f"\n{path}\n\n", style="bold")
+                text.append(f"{free_space:.1f} GB ", style="bold")
+                text.append(f"free\n")
+                text.append(f"{total_space:.1f} GB total")
+
+                # Update disk usage DOM element
+                self.query_one("#container-disk-info", Static).update(text)
+
+            # Catch errors...
+            except Exception as exception:
+
+                # Format error output
+                text = Text()
+                text.append(f"\nError checking disk:\n\n", style="bold")
+                text.append(f"{exception}")
+
+                # Update disk usage DOM element
+                self.query_one("#container-disk-info", Static).update(text)
+
+    """
+    List item mouse right-click event handler.
+    Handles mouse right-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_right_click(self, item: ListItem) -> None:
+
+        # If the right-clicked list item is a search result...
+        if item and item.name == 'result' and hasattr(item, "renderable"):
+
+            # Get the file path from the list item
+            file_path = str(item.renderable)
+
+            # If the file path is not set...
+            if not file_path:
+
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
+
+            # If the file path exists...
+            if path.exists():
+
+                # Open the file path location in Dolphin
+                subprocess.Popen(["dolphin", "--select", str(path.resolve())])
+                return
+
+    """
+    List item mouse double-click event handler.
+    Handles mouse double-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_double_click(self, item: ListItem) -> None:
+
+        # If the double-clicked list item is a search result...
+        if item and item.name == 'result' and hasattr(item, "renderable"):
+
+            # Get the file path from the list item
+            file_path = str(item.renderable)
+
+            # If the file path is not set...
+            if not file_path:
+
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
+
+            # If the file path exists...
+            if path.exists():
+
+                # Open the file path location in Dolphin
+                subprocess.Popen(["dolphin", "--select", str(path.resolve())])
+                return
 
     """
     Textual button click event handler.
-    Handles the button click events for all buttons in the Textual DOM.
+    Handles button click events for all buttons in the Textual DOM.
     """
     def on_button_pressed(self, event: Button.Pressed) -> None:
 
@@ -479,13 +836,16 @@ class MovieSearchScreen(Screen):
             self.app.scan_movie_directories()
 
             # Reload movie cache file...
-            with open(self.app.movie_cache_path) as f:
-                self.movies = json.load(f)
+            with open(self.app.movie_cache_path) as file:
+                self.movies = json.load(file)
 
             # Update filtered list of movies
             self.filtered = self.movies
-            self.input.value = ""
+            self.search.value = ""
             self.refresh_results()
+
+            # Notify user
+            self.app.notify("Rescan successfully completed!")
 
         # Back button clicked...
         elif event.button.id == "button-back":
@@ -502,8 +862,39 @@ class MovieSearchScreen(Screen):
         self.results.clear()
 
         # List movies according to search terms...
-        for path in self.filtered[:50]:
-            self.results.append(ListItem(Static(path)))
+        for path in self.filtered[:99]:
+
+            # Initialize rich text
+            text = Text()
+
+            # Format directories...
+            if os.path.isdir(path):
+
+                # Get directory path elements
+                parent_directory = os.path.dirname(path)
+                folder_name = os.path.basename(path)
+
+                # Format search result
+                if parent_directory:
+                    text.append(f"{parent_directory}/")
+                text.append(folder_name, style="bold #40C057")
+
+            # Format files...
+            else:
+
+                # Get file path elements
+                directory_path = os.path.dirname(path)
+                basename = os.path.basename(path)
+                filename, extension = os.path.splitext(basename)
+
+                # Format search result
+                if directory_path:
+                    text.append(f"{directory_path}/")
+                text.append(filename, style="bold #40C057")
+                text.append(extension)
+
+            # Output search result
+            self.results.append(ListItem(Static(text, name='result')))
 
 
 """
@@ -512,20 +903,31 @@ TV Search Screen
 class TVSearchScreen(Screen):
 
     """
+    Class constructor.
+    """
+    def __init__(self):
+        super().__init__()
+
+        # Initialize value indicating the last-clicked mouse button
+        self.mouse_button_clicked = 1
+
+    """
     Textual DOM initialization.
     Initializes the TV search screen's UI controls.
     """
     def compose(self) -> ComposeResult:
 
-        # Initialize search bar and search results
-        self.input = Input(placeholder="Start typing a TV show title...")
+        # Initialize Textual DOM elements
+        self.subtitle = Static("Search TV Shows", id="subtitle")
+        self.diskinfo = Static("", id="container-disk-info")
+        self.search = SearchBar(placeholder="Start typing a TV show title...")
         self.results = ListView(id="search-results")
 
         # Title
-        yield Container(Static(Pixels.from_image_path(self.app.base_path / "wolp-24.png"), id="logo"), Vertical(Static("Movie Wolp", id="title"), Static("Search TV Shows", id="subtitle"), id="container-title"), id="header")
+        yield Container(self.app.get_logo(), Vertical(self.app.get_title(), self.subtitle, id="container-title"), self.diskinfo, id="header")
 
         # Search bar
-        yield self.input
+        yield self.search
 
         # Search results
         yield self.results
@@ -535,32 +937,32 @@ class TVSearchScreen(Screen):
 
     """
     Textual DOM mounted event handler.
-    Handles the events which occur immediately after the Textual DOM has been initialized.
+    Handles events which occur immediately after the Textual DOM has been initialized.
     """
     def on_mount(self):
 
-        # Focus the search input box
-        self.input.focus()
+        # Focus the search bar
+        self.search.focus()
 
         # Load TV episodes cache file...
-        with open(self.app.tv_cache_path) as f:
-            self.episodes = json.load(f)
+        with open(self.app.tv_cache_path) as file:
+            self.episodes = json.load(file)
 
         # Initialize list of TV show directories (two levels up from each episode)
-        self.shows = sorted({Path(p).parent.parent for p in self.episodes})
+        self.shows = sorted({Path(episode).parent.parent for episode in self.episodes})
 
         # Initialize navigation
-        self.level = "root"              # "root" | "show" | "season"
-        self.cur_show = None             # Current selected episode file path
-        self.cur_season = None           # Current selected season directory path
-        self.filtered = list(self.shows) # Filtered list of TV shows
+        self.level = "root"                 # "root" | "show" | "season"
+        self.current_show = None            # Current selected episode file path
+        self.current_season = None          # Current selected season directory path
+        self.filtered = list(self.shows)    # Filtered list of TV shows
 
         # Refresh search results
         self.refresh_results()
 
     """
     Input field changed event handler.
-    Handles the input field text changed events for all text input fields in the Textual DOM.
+    Handles input field text changed events for all input fields in the Textual DOM.
     """
     def on_input_changed(self, event: Input.Changed) -> None:
 
@@ -568,62 +970,221 @@ class TVSearchScreen(Screen):
         text = event.value.strip().lower()
 
         # Search movies for input field text
-        self.filtered = [s for s in self.shows if text in s.name.lower()]
+        self.filtered = [show for show in self.shows if text in show.name.lower()]
 
         # Reset navigation to root level
         self.level = "root"
-        self.cur_show = None
-        self.cur_season = None
+        self.current_show = None
+        self.current_season = None
 
         # Refresh search results
         self.refresh_results()
 
     """
+    Mouse down event handler.
+    Handles mouse button down events for the entire Textual DOM.
+    """
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+
+        # Detect left-click...
+        if event.button == 1:
+            self.mouse_button_clicked = 1
+
+        # Detect middle-click...
+        elif event.button == 2:
+            self.mouse_button_clicked = 2
+
+        # Detect right-click...
+        elif event.button == 3:
+            self.mouse_button_clicked = 3
+
+    """
     Mouse click event handler.
-    Handles the mouse click events for all controls in the Textual DOM.
+    Handles mouse click events for all controls in the Textual DOM.
     """
     def on_click(self, event: events.Click) -> None:
 
-        # If mouse was double-clicked...
-        if event.chain == 2:
+        # If the mouse was single-clicked...
+        if event.chain == 1:
 
-            # Attempt to handle list item double-click event
-            self.handle_list_item_double_click(event.control)
+            # If the click was a left-click...
+            if self.mouse_button_clicked == 1:
+
+                # Reset disk usage DOM element
+                self.query_one("#container-disk-info", Static).update("")
+
+                # Handle logo's left-click event
+                self.handle_logo_left_click(event.control)
+
+                # Handle list item's left-click event
+                self.handle_list_item_left_click(event.control)
+
+            # Otherwise, if the click was a right-click...
+            elif self.mouse_button_clicked == 3:
+
+                # Handle list item's right-click event
+                self.handle_list_item_right_click(event.control)
+
+        # Otherwise, if the mouse was double-clicked...
+        elif event.chain == 2:
+
+            # If the second click was a left-click...
+            if self.mouse_button_clicked == 1:
+
+                # Handle search bar's double-click event
+                self.handle_search_double_click()
+
+                # Handle list item's double-click event
+                self.handle_list_item_double_click(event.control)
 
     """
-    List item mouse double-click event handler.
-    Handles the mouse double-click events for all list items in the Textual DOM.
+    Logo mouse left-click event handler.
+    Handles mouse left-click events for the header logo in the Textual DOM.
     """
-    def handle_list_item_double_click(self, item: ListItem) -> None:
+    def handle_logo_left_click(self, logo: Static) -> None:
 
-        # If the double-clicked list item has text...
-        if item and hasattr(item, "renderable"):
+        # If the main logo was clicked...
+        if logo and logo.id == 'logo':
+
+            # Show main menu
+            self.app.pop_screen()
+
+    """
+    Search bar mouse double-click event handler.
+    Handles mouse double-click events for the search bar.
+    """
+    def handle_search_double_click(self) -> None:
+
+        # Select all text in the search bar
+        self.search.action_select_all()
+
+    """
+    List item mouse left-click event handler.
+    Handles mouse left-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_left_click(self, item: ListItem) -> None:
+
+        # If the left-clicked list item is a search result...
+        if item and item.name == 'result' and hasattr(item, "renderable"):
 
             # Get the file path from the list item
-            file_path_txt = str(item.renderable)
+            file_path = str(item.renderable)
 
-            # If the file does not exist...
-            if not file_path_txt:
+            # If the file path is not set...
+            if not file_path:
 
-                # Skip file
+                # Skip file path
                 return
 
             # Convert file path to Path object
-            path = Path(file_path_txt)
+            path = Path(file_path)
+
+            # Get disk path from file path...
+            while path.parent != Path("/mnt") and path != path.parent:
+                path = path.parent
+
+            # Attempt to read and output disk usage...
+            try:
+
+                # Get disk usage from file path
+                usage = disk_usage(path)
+
+                # Calculate disk usage
+                total_space = usage.total / (1024 ** 3)
+                free_space = usage.free / (1024 ** 3)
+
+                # Format disk usage output
+                text = Text()
+                text.append(f"\n{path}\n\n", style="bold")
+                text.append(f"{free_space:.1f} GB ", style="bold")
+                text.append(f"free\n")
+                text.append(f"{total_space:.1f} GB total")
+
+                # Update disk usage DOM element
+                self.query_one("#container-disk-info", Static).update(text)
+
+            # Catch errors...
+            except Exception as exception:
+
+                # Format error output
+                text = Text()
+                text.append(f"\nError checking disk:\n\n", style="bold")
+                text.append(f"{exception}")
+
+                # Update disk usage DOM element
+                self.query_one("#container-disk-info", Static).update(text)
+
+    """
+    List item mouse right-click event handler.
+    Handles mouse right-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_right_click(self, item: ListItem) -> None:
+
+        # If the right-clicked list item is a search result...
+        if item and item.name == 'result' and hasattr(item, "renderable"):
+
+            # Get the file path from the list item
+            file_path = str(item.renderable)
+
+            # If the file path is not set...
+            if not file_path:
+
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
+
+            # If the file path exists...
+            if path.exists():
+
+                # Open the file path location in Dolphin
+                subprocess.Popen(["dolphin", "--select", str(path.resolve())])
+                return
+
+    """
+    List item mouse double-click event handler.
+    Handles mouse double-click events for all list items in the Textual DOM.
+    """
+    def handle_list_item_double_click(self, item: ListItem) -> None:
+
+        # If the double-clicked list item is a search result...
+        if item and item.name == 'result' and hasattr(item, "renderable"):
+
+            # Get the file path from the list item
+            file_path = str(item.renderable)
+
+            # If the file path is not set...
+            if not file_path:
+
+                # Skip file path
+                return
+
+            # Convert file path to Path object
+            path = Path(file_path)
 
             # "root"
             # Show root TV show directories...
             if self.level == "root" and path.is_dir():
                 self.level = "show"
-                self.cur_show = path
+                self.current_show = path
                 self.refresh_results()
                 return
 
             # "show"
             # Show seasons in the selected TV show...
             if self.level == "show" and path.is_dir():
+
+                # Attempt to navigate up one level...
+                if path == self.current_show.parent:
+                    self.level = "root"
+                    self.current_show = None
+                    self.refresh_results()
+                    return
+
+                # Show TV show seasons
                 self.level = "season"
-                self.cur_season = path
+                self.current_season = path
                 self.refresh_results()
                 return
 
@@ -631,21 +1192,23 @@ class TVSearchScreen(Screen):
             # Show episodes in the selected season...
             if self.level == "season":
 
-                # Navigate up one level...
-                if path == self.cur_season.parent:
+                # Attempt to navigate up one level...
+                if path == self.current_season.parent:
                     self.level = "show"
-                    self.cur_season = None
+                    self.current_season = None
                     self.refresh_results()
                     return
 
-                # Attempt to open the file location in Dolphin
+                # If the file path exists...
                 if path.is_file() and path.exists():
+
+                    # Open the file path location in Dolphin
                     subprocess.Popen(["dolphin", "--select", str(path.resolve())])
                     return
 
     """
     Textual button click event handler.
-    Handles the button click events for all buttons in the Textual DOM.
+    Handles button click events for all buttons in the Textual DOM.
     """
     def on_button_pressed(self, event: Button.Pressed) -> None:
 
@@ -656,21 +1219,24 @@ class TVSearchScreen(Screen):
             self.app.scan_tv_directories()
 
             # Reload TV cache file...
-            with open(self.app.tv_cache_path) as f:
-                self.episodes = json.load(f)
+            with open(self.app.tv_cache_path) as file:
+                self.episodes = json.load(file)
 
             # Update filtered list of movies
-            self.shows = sorted({Path(p).parent.parent for p in self.episodes})
+            self.shows = sorted({Path(episode).parent.parent for episodes in self.episodes})
             self.filtered = list(self.shows)
-            self.input.value = ""
+            self.search.value = ""
 
             # Reset navigation to root level
             self.level = "root"
-            self.cur_show = None
-            self.cur_season = None
+            self.current_show = None
+            self.current_season = None
 
             # Refresh results
             self.refresh_results()
+
+            # Notify user
+            self.app.notify("Rescan successfully completed!")
 
         # Back button clicked...
         elif event.button.id == "button-back":
@@ -689,28 +1255,153 @@ class TVSearchScreen(Screen):
         # "root"
         # Show root TV show directories...
         if self.level == "root":
-            for path in self.filtered[:50]:
-                self.results.append(ListItem(Static(str(path))))
+
+            # Get root level folders to exclude
+            excluded_roots = set()
+            for path in self.app.config["tv_directories"]:
+                resolved_path = Path(path).resolve()
+                excluded_roots.add(str(resolved_path))
+                excluded_roots.add(str(resolved_path.parent))
+
+            # Show all TV show directories...
+            for path in self.filtered[:99]:
+                if str(path.resolve()) not in excluded_roots:
+
+                    # Get directory path elements
+                    parent_directory = os.path.dirname(path)
+                    folder_name = os.path.basename(path)
+
+                    # Format search result
+                    text = Text()
+                    if parent_directory:
+                        text.append(f"{parent_directory}/")
+                    text.append(folder_name, style="bold #40C057")
+
+                    # Output search result
+                    self.results.append(ListItem(Static(text, name='result')))
 
         # "show"
         # Show seasons in the selected TV show...
         elif self.level == "show":
-            seasons = sorted(p for p in self.cur_show.iterdir() if p.is_dir())
+
+            # Add 'up one level' path to navigate back to the root level
+            up_path = self.current_show.parent
+            up_text = Text()
+            up_text.append(str(up_path), style="bold #FBA454")
+            self.results.append(ListItem(Static(up_text, name='result')))
+
+            # Show all seasons...
+            seasons = sorted(path for path in self.current_show.iterdir() if path.is_dir())
             for season in seasons:
-                self.results.append(ListItem(Static(str(season))))
+
+                # Get directory path elements
+                full_path = season.resolve()
+                root_path = full_path.parent.parent
+                show_folder = full_path.parent.name
+                season_folder = full_path.name
+
+                # Format search result
+                text = Text()
+                if root_path:
+                    text.append(f"{root_path}/")
+                    text.append(f"{show_folder}/", style="bold #40C057")
+                    text.append(season_folder, style="bold #358E9A")
+
+                # Output search result
+                self.results.append(ListItem(Static(text, name='result')))
 
         # "season"
         # Show episodes in the selected season...
         elif self.level == "season":
 
-            # Add 'Up' path to navigate back to the TV show
-            up_path = self.cur_season.parent
-            self.results.append(ListItem(Static(str(up_path))))
+            # Add 'up one level' path to navigate back to the TV show
+            up_path = self.current_season.parent
+            up_text = Text()
+            up_text.append(str(up_path), style="bold #FBA454")
+            self.results.append(ListItem(Static(up_text, name='result')))
 
             # Show all season episodes...
-            episodes = sorted(p for p in self.cur_season.iterdir() if p.is_file())
-            for ep in episodes:
-                self.results.append(ListItem(Static(str(ep))))
+            episodes = sorted(path for path in self.current_season.iterdir() if path.is_file())
+            for episode in episodes:
+
+                # Resolve full path
+                full_path = episode.resolve()
+                root_path = full_path.parent.parent.parent
+                show_folder = full_path.parent.parent.name
+                season_folder = full_path.parent.name
+                filename, extension = os.path.splitext(full_path.name)
+
+                # Format search result
+                text = Text()
+                if root_path:
+                    text.append(f"{root_path}/")
+                text.append(f"{show_folder}/", style="bold #40C057")
+                text.append(f"{season_folder}/", style="bold #358E9A")
+                text.append(filename, style="bold #CE458B")
+                text.append(extension, style="#CE458B")
+
+                # Output search result
+                self.results.append(ListItem(Static(text, name='result')))
+
+
+"""
+Folder Bar Widget
+"""
+class FolderBar(Input):
+
+    # Initialize keyboard action bindings
+    BINDINGS = [Binding("ctrl+a", "select_all", "Select All", show=False),
+                Binding("tab", "autocomplete", "Autocomplete", show=False),]
+
+    """
+    Class constructor.
+    """
+    def __init__(self, placeholder: str = "", suggester: Suggester | None = None):
+        super().__init__(placeholder=placeholder, suggester=suggester)
+
+        # Get Movie Wolp's base file path
+        self.base_path = Path(__file__).parent
+
+    """
+    Search bar Ctrl+A event handler.
+    Handles the Select All keyboard binding.
+    """
+    def action_select_all(self) -> None:
+
+        # Select all text in the search bar
+        self.selection = Selection(0, len(self.value))
+
+    """
+    Search bar Tab event handler.
+    Handles the Autocomplete keyboard binding.
+    """
+    def action_autocomplete(self) -> None:
+
+        # If suggestion isn't blank...
+        if self._suggestion != "":
+
+            # Autocomplete text with suggestion
+            self.value = self._suggestion
+
+            # Move cursor to end
+            self.cursor_position = len(self.value)
+
+"""
+Search Bar Widget
+"""
+class SearchBar(Input):
+
+    # Initialize keyboard action bindings
+    BINDINGS = [Binding("ctrl+a", "select_all", "Select All", show=False),]
+
+    """
+    Search bar Ctrl+A event handler.
+    Handles the Select All keyboard binding.
+    """
+    def action_select_all(self) -> None:
+
+        # Select all text in search bar
+        self.selection = Selection(0, len(self.value))
 
 
 # Run Movie Wolp!

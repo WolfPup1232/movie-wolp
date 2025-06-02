@@ -78,6 +78,13 @@ Footer {
     text-align: left;
 }
 
+#container-disk-info {
+    color: #40C057;
+    margin-right: 4;
+    padding-top: 2;
+    width: 16;
+}
+
 #button-config {
     margin: 2;
 }
@@ -100,4 +107,3 @@ Footer {
     dock: bottom;
     position: absolute;
 }
-
