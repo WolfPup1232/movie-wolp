@@ -1,6 +1,8 @@
 # 🎬 Movie Wolp 🐺
 
-Movie Wolp is a **terminal-based media library explorer** built with [Textual](https://textual.textualize.io/) and [Rich Pixels](https://pypi.org/project/rich-pixels/) using Python.
+Movie Wolp is a **terminal-based media library explorer** built with Python using [Textual](https://textual.textualize.io/) and [Rich Pixels](https://pypi.org/project/rich-pixels/).
+
+![Movie Wolp Demo GIF](./demo.gif)
 
 ---
 
@@ -52,7 +54,7 @@ On first launch, you’ll be prompted to configure your movie and TV show librar
 
 ---
 
-### .desktop Shortcut (Optional)
+### (Optional) .desktop Shortcut
 
 Make a handy little desktop shortcut to run Movie Wolp:
 
